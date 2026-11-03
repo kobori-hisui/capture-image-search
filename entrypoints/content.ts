@@ -290,12 +290,12 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
     render();
   });
 
-  root.addEventListener('pointerup', () => {
+  root.addEventListener('pointerup', (e) => {
     if (mode === 'none') return;
     mode = 'none';
     const px = sel ? toPx(sel) : null;
     if (px && px.w >= MIN && px.h >= MIN) {
-      void search();
+      void search(e.shiftKey);
     } else {
       sel = null;
       render();
@@ -303,7 +303,7 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
   });
 
   // Recorta de la captura congelada (no de la página en vivo) y la manda al background
-  async function search() {
+  async function search(save = false) {
     if (!sel) return;
     const x = clamp(Math.round(sel.x * bmp.width), 0, bmp.width - 1);
     const y = clamp(Math.round(sel.y * bmp.height), 0, bmp.height - 1);
@@ -312,12 +312,54 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
 
     const canvas = new OffscreenCanvas(cw, ch);
     canvas.getContext('2d')!.drawImage(bmp, x, y, cw, ch, 0, 0, cw, ch);
+
+    // Captura simple: no hay panel ni Yandex; se entrega la imagen y se cierra el selector
+    if (service === 'capture') {
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      const msg = await deliver(blob, save);
+      toast.textContent = msg;
+      toast.style.display = 'flex';
+      toast.style.background = msg.startsWith('✓') ? '#d7f5dd' : '#fde7e9';
+      box.style.display = 'none';
+      setTimeout(cleanup, 900);
+      return;
+    }
+
     const image = await blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
     try {
       await browser.runtime.sendMessage({ type: 'region', image, service });
     } catch (err) {
       console.error('[reverse-search]', err);
     }
+  }
+}
+
+// Copia al portapapeles; si falla (sin foco, permisos de la página…) o si se pidió, descarga el PNG.
+async function deliver(blob: Blob, save: boolean): Promise<string> {
+  let copied = false;
+  if (!save) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      copied = true;
+    } catch (err) {
+      console.warn('[reverse-search] portapapeles falló, descargando', err);
+    }
+  }
+  if (copied) return '✓ Copiado al portapapeles';
+  try {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    const name = `captura-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.documentElement.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    return save ? `✓ Guardado: ${name}` : `✓ Portapapeles no disponible · guardado: ${name}`;
+  } catch (err) {
+    return `✗ No se pudo entregar la captura: ${String(err).slice(0, 80)}`;
   }
 }
 

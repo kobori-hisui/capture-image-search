@@ -3,7 +3,8 @@ import type { Runner, ServiceId } from './types';
 import { runImageSearch } from './yandex/image-search';
 import { runOcrTranslate } from './yandex/ocr-translate';
 
-export const RUNNERS: Record<ServiceId, Runner> = {
+// 'capture' no pasa por el panel lateral (se resuelve en el selector), por eso es parcial.
+export const RUNNERS: Partial<Record<ServiceId, Runner>> = {
   'yandex-search': runImageSearch,
   'yandex-ocr': runOcrTranslate,
 };

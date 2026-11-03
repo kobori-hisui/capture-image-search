@@ -1,4 +1,4 @@
-import type { PendingSearch } from '../background';
+import type { PendingSearch } from '../../utils/shared';
 
 const statusEl = document.getElementById('status')!;
 const detailEl = document.getElementById('detail')!;

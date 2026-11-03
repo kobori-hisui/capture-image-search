@@ -18,6 +18,10 @@ export default defineConfig({
         suggested_key: { default: 'Alt+Shift+D' },
         description: 'Yandex: OCR · traducir imagen',
       },
+      capture: {
+        suggested_key: { default: 'Alt+Shift+C' },
+        description: 'Capturar región (copiar al portapapeles)',
+      },
     },
   },
 });

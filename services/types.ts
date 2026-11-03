@@ -1,6 +1,6 @@
 // Contratos comunes a todos los servicios (hoy solo Yandex; después Google, etc.)
 
-export type ServiceId = 'yandex-search' | 'yandex-ocr';
+export type ServiceId = 'yandex-search' | 'yandex-ocr' | 'capture';
 
 /** Datos puros de un servicio (los usan el selector, el background y el panel). */
 export type ServiceMeta = {
