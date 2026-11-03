@@ -18,6 +18,22 @@
       #status { padding: 24px 16px; color: #9aa0a6; font-size: 14px; }
       #status.error { color: #f28b82; }
       #status pre { white-space: pre-wrap; font-size: 11px; opacity: 0.8; }
+      #resultsView { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+      #resultsView[hidden], #history[hidden], [hidden] { display: none !important; }
+      body.hist #open { display: none; }
+      #history { flex: 1; overflow: auto; padding: 0 12px 16px; }
+      #history .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; font-size: 12px; color: #9aa0a6; }
+      #history select, #history button { background: #303134; color: #e8eaed; border: 1px solid #4a4d51; border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+      #history button:hover { background: #3c4043; }
+      #history input[type=range] { vertical-align: middle; width: 90px; }
+      #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+      .card { background: #2a2b2e; border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+      .card img { width: 100%; height: 120px; object-fit: contain; background: #17181a; border-radius: 4px; cursor: zoom-in; }
+      .card .meta { font-size: 11px; color: #9aa0a6; }
+      .card .acts { display: flex; gap: 4px; }
+      .card .acts button { flex: 1; padding: 4px 2px; font-size: 11px; }
+      .card .acts button:last-child { flex: 0 0 30px; }
+      #empty { color: #9aa0a6; font-size: 13px; padding: 16px 4px; }
       iframe { flex: 1; border: 0; width: 100%; background: #fff; display: none; }
     </style>
   </head>
@@ -26,10 +42,30 @@
       <b id="title">Yandex</b>
       <span class="sp"></span>
       <button id="open" title="Abrir en una pestaña" hidden>↗</button>
+      <button id="hist" title="Historial de capturas">🕘</button>
     </header>
-    <div id="banner" hidden></div>
-    <div id="status">Selecciona una región de la página.</div>
-    <iframe id="results" name="results" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    <div id="resultsView">
+      <div id="banner" hidden></div>
+      <div id="status">Selecciona una región de la página.</div>
+      <iframe id="results" name="results" referrerpolicy="no-referrer-when-downgrade"></iframe>
+    </div>
+    <section id="history" hidden>
+      <div class="bar">
+        <label>Formato
+          <select id="fmt"><option value="png">PNG</option><option value="jpeg">JPG</option><option value="webp">WebP</option></select>
+        </label>
+        <label id="qWrap">Calidad <input id="q" type="range" min="40" max="100" step="1" /> <span id="qv"></span></label>
+        <label>Guardar
+          <select id="max"><option>20</option><option>50</option><option>100</option><option>200</option></select>
+        </label>
+        <label>Página completa
+          <select id="method"><option value="scroll">Desplazar y unir</option><option value="debugger">Una captura (depurador)</option></select>
+        </label>
+        <button id="clear">Borrar todo</button>
+      </div>
+      <div id="grid"></div>
+      <p id="empty" hidden>Aún no hay capturas. Usa Alt+Shift+C (región) o Alt+Shift+F (página completa).</p>
+    </section>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

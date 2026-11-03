@@ -1,6 +1,6 @@
 // Contratos comunes a todos los servicios (hoy solo Yandex; después Google, etc.)
 
-export type ServiceId = 'yandex-search' | 'yandex-ocr' | 'capture';
+export type ServiceId = 'yandex-search' | 'yandex-ocr' | 'capture' | 'capture-full';
 
 /** Datos puros de un servicio (los usan el selector, el background y el panel). */
 export type ServiceMeta = {
@@ -15,6 +15,7 @@ export type Job = { id: string; service: ServiceId; image: string /* data URL PN
 
 export const DEFAULT_SERVICE: ServiceId = 'yandex-search'; // clic izquierdo / Alt+Shift+S
 export const JOB_KEY = 'pendingJob';
+export const VIEW_KEY = 'panelView'; // el background le pide al panel que muestre el historial
 export const OCR_PAYLOAD_KEY = 'ocrPayload'; // imagen que el iframe de Yandex Traductor va a pedir
 
 /** Lo que un servicio puede hacer con el panel lateral. */

@@ -4,7 +4,7 @@ export default defineConfig({
   manifest: {
     name: 'Reverse Search',
     description: 'Selecciona una región de la página y búscala en Yandex (panel lateral)',
-    permissions: ['activeTab', 'scripting', 'storage', 'declarativeNetRequest', 'sidePanel', 'contextMenus'],
+    permissions: ['activeTab', 'scripting', 'storage', 'declarativeNetRequest', 'sidePanel', 'contextMenus', 'debugger'],
     // Subir la imagen, ajustar Origin/Referer y poder mostrar Yandex dentro del panel
     host_permissions: ['https://*.yandex.com/*', 'https://yandex.com/*', 'https://*.yandex.ru/*', 'https://ya.ru/*'],
     action: { default_title: 'Buscar por imagen (Alt+Shift+S)' },
@@ -17,6 +17,10 @@ export default defineConfig({
       'yandex-ocr': {
         suggested_key: { default: 'Alt+Shift+D' },
         description: 'Yandex: OCR · traducir imagen',
+      },
+      'capture-full': {
+        suggested_key: { default: 'Alt+Shift+F' },
+        description: 'Capturar página completa',
       },
       capture: {
         suggested_key: { default: 'Alt+Shift+C' },

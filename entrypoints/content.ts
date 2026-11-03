@@ -1,5 +1,7 @@
 import { DEFAULT_SERVICE, type ServiceId } from '../services/types';
 import { SERVICES, isServiceId } from '../services/meta';
+import { EXT, downloadBlob, encodeImage, stamp } from '../utils/image';
+import { getSettings } from '../utils/settings';
 
 // Selector estilo Google Lens.
 // Al activarse congela la pestaña (captura) y trabaja sobre esa imagen, así el recuadro
@@ -38,6 +40,11 @@ async function toggle() {
   if (w.__rsBusy) return;
   w.__rsBusy = true;
   try {
+    // Página completa: no hay selector, el background captura todo de una vez
+    if (service === 'capture-full') {
+      await runFullPage();
+      return;
+    }
     // Tamaño de la ventana (px CSS) en el momento de congelar: es la referencia 1:1
     // de lo que el usuario veía, aunque la captura tenga otra proporción por redondeos.
     const view = { w: window.innerWidth, h: window.innerHeight };
@@ -105,6 +112,46 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
 
   toast.querySelector('span')!.textContent = SERVICES[service].toast;
 
+  // Atajos dentro del selector de captura: página completa e historial
+  const tools = el('div', {
+    position: 'absolute',
+    top: '68px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: service === 'capture' ? 'flex' : 'none',
+    gap: '8px',
+  });
+  const toolBtn = (label: string, run: () => void) => {
+    const b = el('button', {
+      padding: '8px 16px',
+      border: '0',
+      borderRadius: '999px',
+      background: '#1b1b1f',
+      color: '#fff',
+      font: 'inherit',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+    });
+    b.textContent = label;
+    // que el overlay no lo interprete como el inicio de una selección
+    b.addEventListener('pointerdown', (e) => e.stopPropagation());
+    b.addEventListener('pointerup', (e) => e.stopPropagation());
+    b.addEventListener('click', run);
+    return b;
+  };
+  tools.append(
+    toolBtn('⤓ Página completa', async () => {
+      cleanup(); // el overlay no debe salir en la captura
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 80)));
+      await runFullPage();
+    }),
+    toolBtn('🕘 Historial', () => {
+      browser.runtime.sendMessage({ type: 'history:open' }).catch(() => {});
+      cleanup();
+    }),
+  );
+
   // Recuadro: hueco claro (el box-shadow oscurece todo lo demás) + borde degradado + esquinas blancas
   const box = el('div', {
     position: 'absolute',
@@ -133,7 +180,7 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
 
   for (const c of ['tl', 'tr', 'bl', 'br'] as const) box.appendChild(corner(c));
 
-  root.append(frame, dim, box, toast);
+  root.append(frame, dim, box, toast, tools);
   document.documentElement.appendChild(root);
 
   // --- Geometría -----------------------------------------------------------
@@ -256,6 +303,7 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
     sy = e.clientY;
     orig = sel ? toPx(sel) : null;
     toast.style.display = 'none';
+    tools.style.display = 'none';
     if (mode === 'new') {
       const cx = clamp(sx, ox, ox + dw);
       const cy = clamp(sy, oy, oy + dh);
@@ -316,6 +364,9 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
     // Captura simple: no hay panel ni Yandex; se entrega la imagen y se cierra el selector
     if (service === 'capture') {
       const blob = await canvas.convertToBlob({ type: 'image/png' });
+      void blobToDataUrl(blob)
+        .then((image) => browser.runtime.sendMessage({ type: 'history:add', image }))
+        .catch((err) => console.warn('[reverse-search] historial', err));
       const msg = await deliver(blob, save);
       toast.textContent = msg;
       toast.style.display = 'flex';
@@ -334,33 +385,208 @@ function start(w: Guard, bmp: ImageBitmap, view: { w: number; h: number }, servi
   }
 }
 
-// Copia al portapapeles; si falla (sin foco, permisos de la página…) o si se pidió, descarga el PNG.
+// Copia al portapapeles (Chrome solo admite PNG ahí). Si falla (sin foco, permisos de la página…) o si se
+// pidió guardar, descarga el archivo en el formato y calidad de los ajustes.
 async function deliver(blob: Blob, save: boolean): Promise<string> {
-  let copied = false;
   if (!save) {
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      copied = true;
+      return '✓ Copiado al portapapeles';
     } catch (err) {
       console.warn('[reverse-search] portapapeles falló, descargando', err);
     }
   }
-  if (copied) return '✓ Copiado al portapapeles';
   try {
-    const d = new Date();
-    const p = (n: number) => String(n).padStart(2, '0');
-    const name = `captura-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.documentElement.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    const s = await getSettings();
+    const out = await encodeImage(blob, s.format, s.quality);
+    const name = `captura-${stamp()}.${EXT[s.format]}`;
+    downloadBlob(out, name);
     return save ? `✓ Guardado: ${name}` : `✓ Portapapeles no disponible · guardado: ${name}`;
   } catch (err) {
     return `✗ No se pudo entregar la captura: ${String(err).slice(0, 80)}`;
   }
+}
+
+// ---- Página completa por desplazamiento ------------------------------------------------------------
+// Va bajando el scroll, captura cada pantalla con captureVisibleTab (lo mismo que ya usa el selector) y las
+// une. No depende de cómo pinta Chrome fuera de la ventana. Si la página no se puede desplazar, devuelve
+// solo lo visible (no hay "página completa" que capturar).
+const MAX_PX = 16_000;
+const MAX_TILES = 40;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+type Scroller = {
+  view: { l: number; t: number; w: number; h: number }; // zona visible del scroller, en px CSS de la ventana
+  top(): number;
+  setTop(y: number): void;
+  height(): number; // alto total del contenido
+};
+
+function findScroller(): Scroller | null {
+  const root = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+  const html = getComputedStyle(document.documentElement).overflowY;
+  const body = getComputedStyle(document.body).overflowY;
+  const eff = html === 'visible' ? body : html; // el overflow del body se propaga a la ventana si html es visible
+  if (eff !== 'hidden' && eff !== 'clip' && root.scrollHeight > root.clientHeight + 4) {
+    const de = document.documentElement;
+    return {
+      view: { l: 0, t: 0, w: de.clientWidth, h: de.clientHeight },
+      top: () => window.scrollY,
+      setTop: (y) => window.scrollTo({ top: y, behavior: 'instant' as ScrollBehavior }),
+      height: () => root.scrollHeight,
+    };
+  }
+  // La ventana no scrollea: ¿hay un contenedor con scroll propio que ocupe buena parte de la pantalla?
+  let best: HTMLElement | null = null;
+  let bestArea = 0;
+  const vArea = window.innerWidth * window.innerHeight;
+  for (const el of document.querySelectorAll<HTMLElement>('body *')) {
+    if (el.scrollHeight <= el.clientHeight + 4) continue;
+    const oy = getComputedStyle(el).overflowY;
+    if (oy !== 'auto' && oy !== 'scroll' && oy !== 'overlay') continue;
+    const r = el.getBoundingClientRect();
+    const area =
+      Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0)) *
+      Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+    if (area >= vArea * 0.2 && area > bestArea) {
+      best = el;
+      bestArea = area;
+    }
+  }
+  if (!best) return null;
+  const el = best;
+  const r = el.getBoundingClientRect();
+  return {
+    view: { l: r.left + el.clientLeft, t: r.top + el.clientTop, w: el.clientWidth, h: el.clientHeight },
+    top: () => el.scrollTop,
+    setTop: (y) => el.scrollTo({ top: y, behavior: 'instant' as ScrollBehavior }),
+    height: () => el.scrollHeight,
+  };
+}
+
+// Cabeceras/menús fijos: salen en la primera pantalla; en las demás se ocultan para que no se repitan.
+// Los que cubren media pantalla o más (visores, modales) se dejan en paz.
+function hideFixed(hidden: Array<[HTMLElement, string, string]>) {
+  const vArea = window.innerWidth * window.innerHeight;
+  for (const el of document.querySelectorAll<HTMLElement>('body *')) {
+    const p = getComputedStyle(el).position;
+    if (p !== 'fixed' && p !== 'sticky') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width * r.height >= vArea * 0.5) continue;
+    hidden.push([el, el.style.getPropertyValue('visibility'), el.style.getPropertyPriority('visibility')]);
+    el.style.setProperty('visibility', 'hidden', 'important');
+  }
+}
+
+async function stitchPage(): Promise<Blob> {
+  const progress = (text: string) => browser.runtime.sendMessage({ type: 'progress', text }).catch(() => {});
+  let last = 0;
+  const shoot = async () => {
+    const wait = 620 - (Date.now() - last); // Chrome admite ~2 capturas por segundo
+    if (wait > 0) await sleep(wait);
+    const res = await browser.runtime.sendMessage({ type: 'frame' });
+    last = Date.now();
+    if (!res?.dataUrl) throw new Error(res?.error ?? 'sin captura');
+    return createImageBitmap(dataUrlToBlob(res.dataUrl));
+  };
+  const settle = async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await sleep(140); // imágenes diferidas / repintado
+  };
+
+  const sc = findScroller();
+  if (!sc) {
+    const bmp = await shoot();
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    c.getContext('2d')!.drawImage(bmp, 0, 0);
+    bmp.close();
+    return c.convertToBlob({ type: 'image/png' });
+  }
+
+  const startTop = sc.top();
+  const hidden: Array<[HTMLElement, string, string]> = [];
+  const tiles: Array<{ bmp: ImageBitmap; top: number }> = [];
+  const h = sc.view.h;
+  let total = sc.height();
+  try {
+    let y = 0;
+    for (let i = 0; i < MAX_TILES; i++) {
+      sc.setTop(y);
+      await settle();
+      const top = sc.top();
+      tiles.push({ bmp: await shoot(), top });
+      if (i === 0) hideFixed(hidden);
+      total = Math.max(total, sc.height());
+      void progress(`${i + 1}/${Math.max(i + 1, Math.ceil(total / h))}`);
+      const scale = tiles[0].bmp.width / window.innerWidth;
+      if (top + h >= total - 1 || (top + h) * scale >= MAX_PX) break; // llegó al final (o al límite)
+      if (top + h <= top) break;
+      y = top + h;
+    }
+    const scale = tiles[0].bmp.width / window.innerWidth;
+    const outW = Math.round(sc.view.w * scale);
+    const bottom = Math.max(...tiles.map((t) => t.top)) + h;
+    const outH = Math.min(Math.round(Math.max(total, bottom) * scale), MAX_PX);
+    const canvas = new OffscreenCanvas(outW, outH);
+    const g = canvas.getContext('2d')!;
+    const sx = Math.round(sc.view.l * scale);
+    const sy = Math.round(sc.view.t * scale);
+    const sh = Math.round(h * scale);
+    for (const t of tiles) {
+      g.drawImage(t.bmp, sx, sy, outW, sh, 0, Math.round(t.top * scale), outW, sh);
+      t.bmp.close();
+    }
+    return await canvas.convertToBlob({ type: 'image/png' });
+  } finally {
+    for (const [el, v, prio] of hidden) {
+      if (v) el.style.setProperty('visibility', v, prio);
+      else el.style.removeProperty('visibility');
+    }
+    sc.setTop(startTop);
+    void progress('');
+  }
+}
+
+// Página completa. Sin aviso previo a propósito: cualquier elemento que pongamos saldría en la captura.
+async function runFullPage() {
+  let msg: string;
+  try {
+    const { fullMethod } = await getSettings();
+    let blob: Blob;
+    if (fullMethod === 'debugger') {
+      // Una sola captura con el depurador; el background ya la guardó en el historial
+      const res = await browser.runtime.sendMessage({ type: 'full-page' });
+      if (!res?.dataUrl) throw new Error(res?.error ?? 'sin captura');
+      blob = dataUrlToBlob(res.dataUrl);
+    } else {
+      blob = await stitchPage();
+      void blobToDataUrl(blob)
+        .then((image) => browser.runtime.sendMessage({ type: 'history:add', image }))
+        .catch((err) => console.warn('[reverse-search] historial', err));
+    }
+    msg = await deliver(blob, false);
+  } catch (err) {
+    console.error('[reverse-search]', err);
+    msg = `✗ ${String(err).slice(0, 140)}`;
+  }
+  const note = el('div', {
+    position: 'fixed',
+    top: '12px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: '2147483647',
+    padding: '12px 18px',
+    borderRadius: '999px',
+    background: msg.startsWith('✓') ? '#d7f5dd' : '#fde7e9',
+    color: '#1b1b1f',
+    font: '13px system-ui, sans-serif',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+    pointerEvents: 'none',
+    whiteSpace: 'nowrap',
+  });
+  note.textContent = msg;
+  document.documentElement.appendChild(note);
+  setTimeout(() => note.remove(), 2200);
 }
 
 function clamp(v: number, lo: number, hi: number) {
